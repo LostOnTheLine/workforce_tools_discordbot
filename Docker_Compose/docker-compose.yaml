@@ -1,0 +1,17 @@
+services:
+  workforce_tools_discordbot:
+    image: ghcr.io/lostontheline/workforce_tools_discordbot:latest
+    container_name: workforce_tools_discordbot
+    environment:
+      - TZ=America/Phoenix
+      - DISCORD_BOT_TOKEN=<Discord-bot-token-placed-here>
+      - CALENDAR_ID=<GoogleCalendarID>
+    volumes:
+      - /volume1/docker/workforce_tools/creds:/creds   # Mount credentials.json
+      - /volume1/docker/workforce_tools/data:/data     # Mount for token.json and other data
+      - /volume1/docker/log/var/log:/var/log:rw       # Mount for logs
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - "com.centurylinklabs.watchtower.scope=github"
