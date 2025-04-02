@@ -34,19 +34,29 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if message.author == bot.user or not message.attachments:
+    print(f"Received message from {message.author} in channel {message.channel.name}")
+    if message.author == bot.user:
+        print("Message is from the bot itself, ignoring.")
         return
-    if message.channel.name != 'work-calendar':  # Restrict to specific channel
+    if not message.attachments:
+        print("Message has no attachments, ignoring.")
+        return
+    if message.channel.name != 'work-calendar':
+        print(f"Message is not in #work-calendar (channel: {message.channel.name}), ignoring.")
         return
 
+    print(f"Processing message with {len(message.attachments)} attachments")
     for attachment in message.attachments:
         if attachment.filename.endswith(('.png', '.jpg', '.jpeg')):
+            print(f"Found image attachment: {attachment.filename}")
             # Download image
             image_data = await attachment.read()
             image = Image.open(io.BytesIO(image_data))
             
             # OCR
+            print("Performing OCR on image")
             text = pytesseract.image_to_string(image)
+            print(f"OCR result: {text}")
             
             # Current date for reference
             current_date = datetime.now()
@@ -131,5 +141,8 @@ async def on_message(message):
                 service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
             
             await message.channel.send(f'Added {len(events)} events to your Google Calendar!')
+
+    # Ensure commands are processed after handling the message
+    await bot.process_commands(message)
 
 bot.run(DISCORD_BOT_TOKEN)
