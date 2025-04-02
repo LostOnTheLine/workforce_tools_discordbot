@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import os
 import logging
 import traceback
+import shutil
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -33,6 +34,26 @@ if not os.path.exists(creds_path):
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 creds = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
 service = build('calendar', 'v3', credentials=creds)
+
+# Directory for saving OCR results
+OCR_DIR = '/data'
+if not os.path.exists(OCR_DIR):
+    os.makedirs(OCR_DIR)
+
+def save_ocr_result(text):
+    """Save the OCR result to a file and rotate the last 3 results."""
+    try:
+        # Shift existing files: 2 -> 3, 1 -> 2
+        if os.path.exists(os.path.join(OCR_DIR, 'ocr_result_2.txt')):
+            shutil.move(os.path.join(OCR_DIR, 'ocr_result_2.txt'), os.path.join(OCR_DIR, 'ocr_result_3.txt'))
+        if os.path.exists(os.path.join(OCR_DIR, 'ocr_result_1.txt')):
+            shutil.move(os.path.join(OCR_DIR, 'ocr_result_1.txt'), os.path.join(OCR_DIR, 'ocr_result_2.txt'))
+        # Save the new result as ocr_result_1.txt
+        with open(os.path.join(OCR_DIR, 'ocr_result_1.txt'), 'w') as f:
+            f.write(text)
+        logger.info("Saved OCR result to /data/ocr_result_1.txt")
+    except Exception as e:
+        logger.error(f"Failed to save OCR result: {str(e)}")
 
 @bot.event
 async def on_ready():
@@ -78,6 +99,9 @@ async def on_message(message):
                     return
                 logger.info(f"OCR result:\n{text}")
                 
+                # Save OCR result to file
+                save_ocr_result(text)
+                
                 # Current date for reference
                 current_date = datetime.now()
                 two_months_later = current_date + timedelta(days=60)
@@ -87,6 +111,7 @@ async def on_message(message):
                 lines = text.split('\n')
                 current_day = None
                 current_date = None  # We'll set this when we parse a date
+                last_date = None  # Keep track of the last parsed date
 
                 for i, line in enumerate(lines):
                     line = line.strip()
@@ -106,6 +131,7 @@ async def on_message(message):
                                 # Check if the day of the week matches
                                 if test_date.strftime('%a')[:3] == current_day and datetime.now() <= test_date <= two_months_later:
                                     current_date = test_date
+                                    last_date = current_date
                                     logger.info(f"Parsed date: {current_date.strftime('%Y-%m-%d')} ({current_day})")
                                     break
                             except ValueError:
@@ -114,8 +140,18 @@ async def on_message(message):
                     
                     # Match shift time (e.g., "10:30 AM - 7:30 PM [8:00]")
                     shift_match = re.match(r'(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]', line)
-                    if shift_match and current_date:
+                    if shift_match:
                         start_time, end_time = shift_match.groups()
+                        
+                        # If we haven't parsed a date yet, skip this shift
+                        if not last_date:
+                            logger.warning(f"Found shift time {start_time}-{end_time} but no date has been parsed yet. Skipping.")
+                            continue
+                        
+                        # If current_date is not set (no day of week on this line), increment the last parsed date
+                        if not current_date:
+                            current_date = last_date + timedelta(days=1)
+                            logger.info(f"No day of week for shift, incrementing date to: {current_date.strftime('%Y-%m-%d')}")
                         
                         # Get the event title (next 1-2 lines after the shift time)
                         event_title = None
@@ -174,6 +210,10 @@ async def on_message(message):
                             }
                         }
                         events.append(event)
+                        # Update last_date to the current date
+                        last_date = current_date
+                        # Reset current_date to None so the next shift without a day of week will increment the date
+                        current_date = None
                 
                 # Add events to Google Calendar
                 for event in events:
