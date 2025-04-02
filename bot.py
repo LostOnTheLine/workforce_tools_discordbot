@@ -109,19 +109,42 @@ async def on_message(message):
                 # Parse events
                 events = []
                 lines = text.split('\n')
-                current_day = None
-                current_date = None  # We'll set this when we parse a date
-                last_date = None  # Keep track of the last parsed date
-
-                for i, line in enumerate(lines):
-                    line = line.strip()
-                    # Match day and date (e.g., "Mon 31" or "Wed 2")
-                    day_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})$', line)
-                    if day_match:
-                        current_day, day_num = day_match.groups()
+                i = 0
+                while i < len(lines):
+                    line = lines[i].strip()
+                    
+                    # Skip empty lines or irrelevant lines
+                    if not line or 'Associate' in line or 'Schedule' in line or 'hours' in line:
+                        i += 1
+                        continue
+                    
+                    # Check if this line starts a new day block (ends with '>')
+                    if line.endswith('>'):
+                        # Parse the day of the week and shift time from the first line
+                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*[A-Z]\s*>$', line)
+                        if not day_shift_match:
+                            logger.warning(f"Line does not match expected day shift format: {line}")
+                            i += 1
+                            continue
+                        
+                        day_of_week, start_time, end_time = day_shift_match.groups()
+                        
+                        # Get the date number and event title from the next line
+                        i += 1
+                        if i >= len(lines):
+                            break
+                        next_line = lines[i].strip()
+                        date_title_match = re.match(r'^(\d{1,2})\s+(.+)$', next_line)
+                        if not date_title_match:
+                            logger.warning(f"Line does not match expected date/title format: {next_line}")
+                            i += 1
+                            continue
+                        
+                        day_num, event_title = date_title_match.groups()
                         day_num = int(day_num)
                         
                         # Find the correct month and year for this date
+                        event_date = None
                         for month_offset in range(0, 3):  # Check current month and next two months
                             test_date = datetime.now().replace(day=1, month=datetime.now().month + month_offset)
                             if test_date.month > 12:
@@ -129,47 +152,21 @@ async def on_message(message):
                             try:
                                 test_date = test_date.replace(day=day_num)
                                 # Check if the day of the week matches
-                                if test_date.strftime('%a')[:3] == current_day and datetime.now() <= test_date <= two_months_later:
-                                    current_date = test_date
-                                    last_date = current_date
-                                    logger.info(f"Parsed date: {current_date.strftime('%Y-%m-%d')} ({current_day})")
+                                if test_date.strftime('%a')[:3] == day_of_week and datetime.now() <= test_date <= two_months_later:
+                                    event_date = test_date
+                                    logger.info(f"Parsed date: {event_date.strftime('%Y-%m-%d')} ({day_of_week})")
                                     break
                             except ValueError:
                                 continue
-                        continue
-                    
-                    # Match shift time (e.g., "10:30 AM - 7:30 PM [8:00]")
-                    shift_match = re.match(r'(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]', line)
-                    if shift_match:
-                        start_time, end_time = shift_match.groups()
                         
-                        # If we haven't parsed a date yet, skip this shift
-                        if not last_date:
-                            logger.warning(f"Found shift time {start_time}-{end_time} but no date has been parsed yet. Skipping.")
+                        if not event_date:
+                            logger.warning(f"Could not determine date for {day_of_week} {day_num}")
+                            i += 1
                             continue
                         
-                        # If current_date is not set (no day of week on this line), increment the last parsed date
-                        if not current_date:
-                            current_date = last_date + timedelta(days=1)
-                            logger.info(f"No day of week for shift, incrementing date to: {current_date.strftime('%Y-%m-%d')}")
-                        
-                        # Get the event title (next 1-2 lines after the shift time)
-                        event_title = None
-                        for j in range(1, 3):
-                            if i + j < len(lines):
-                                next_line = lines[i + j].strip()
-                                if 'Associate' in next_line:
-                                    continue
-                                if next_line and 'Store' in next_line:
-                                    event_title = next_line
-                                    break
-                        if not event_title:
-                            logger.warning(f"No event title found for shift on {current_date.strftime('%Y-%m-%d')}")
-                            continue
-                        
-                        # Parse start and end times
-                        start_dt = datetime.strptime(f"{current_date.strftime('%Y-%m-%d')} {start_time}", '%Y-%m-%d %I:%M %p')
-                        end_dt = datetime.strptime(f"{current_date.strftime('%Y-%m-%d')} {end_time}", '%Y-%m-%d %I:%M %p')
+                        # Create the first event for this day
+                        start_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {start_time}", '%Y-%m-%d %I:%M %p')
+                        end_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {end_time}", '%Y-%m-%d %I:%M %p')
                         logger.info(f"Parsed shift: {start_dt} to {end_dt}, Title: {event_title}")
                         
                         # Check for existing events on this day
@@ -197,7 +194,7 @@ async def on_message(message):
                                 await message.channel.send("Error: Failed to delete existing events in Google Calendar. Please check the Service Account permissions.")
                                 return
                         
-                        # Create new event
+                        # Create the event
                         event = {
                             'summary': event_title,
                             'start': {
@@ -210,10 +207,50 @@ async def on_message(message):
                             }
                         }
                         events.append(event)
-                        # Update last_date to the current date
-                        last_date = current_date
-                        # Reset current_date to None so the next shift without a day of week will increment the date
-                        current_date = None
+                        
+                        # Check for an additional shift time in the next few lines
+                        i += 1
+                        while i < len(lines):
+                            next_line = lines[i].strip()
+                            if not next_line or 'Associate' in next_line:
+                                i += 1
+                                continue
+                            # Check if the next line is a new day block
+                            if next_line.endswith('>'):
+                                break
+                            # Check if the next line is a shift time
+                            shift_match = re.match(r'(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]', next_line)
+                            if shift_match:
+                                start_time, end_time = shift_match.groups()
+                                # Get the event title from the next line
+                                i += 1
+                                if i >= len(lines):
+                                    break
+                                next_line = lines[i].strip()
+                                if 'Associate' in next_line or not next_line:
+                                    i += 1
+                                    continue
+                                event_title = next_line
+                                # Create the additional event for the same day
+                                start_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {start_time}", '%Y-%m-%d %I:%M %p')
+                                end_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {end_time}", '%Y-%m-%d %I:%M %p')
+                                logger.info(f"Parsed additional shift: {start_dt} to {end_dt}, Title: {event_title}")
+                                event = {
+                                    'summary': event_title,
+                                    'start': {
+                                        'dateTime': start_dt.isoformat(),
+                                        'timeZone': 'America/Phoenix'
+                                    },
+                                    'end': {
+                                        'dateTime': end_dt.isoformat(),
+                                        'timeZone': 'America/Phoenix'
+                                    }
+                                }
+                                events.append(event)
+                            i += 1
+                        continue
+                    
+                    i += 1
                 
                 # Add events to Google Calendar
                 for event in events:
