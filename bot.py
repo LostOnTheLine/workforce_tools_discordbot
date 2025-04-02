@@ -97,12 +97,27 @@ async def on_message(message):
                     start_dt = datetime.strptime(f"{current_date.strftime('%Y-%m-%d')} {start_time}", '%Y-%m-%d %I:%M %p')
                     end_dt = datetime.strptime(f"{current_date.strftime('%Y-%m-%d')} {end_time}", '%Y-%m-%d %I:%M %p')
                     
-                    # Create event
+                    # Check for existing events on this day
+                    day_start = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                    day_end = day_start + timedelta(days=1)
+                    existing_events = service.events().list(
+                        calendarId=CALENDAR_ID,
+                        timeMin=day_start.isoformat() + 'Z',
+                        timeMax=day_end.isoformat() + 'Z',
+                        singleEvents=True
+                    ).execute().get('items', [])
+                    
+                    # Delete existing events for this day
+                    for event in existing_events:
+                        service.events().delete(calendarId=CALENDAR_ID, eventId=event['id']).execute()
+                        print(f"Deleted existing event on {day_start.strftime('%Y-%m-%d')}: {event['summary']}")
+                    
+                    # Create new event
                     event = {
                         'summary': event_title,
                         'start': {
                             'dateTime': start_dt.isoformat(),
-                            'timeZone': 'America/Phoenix'  # Set via TZ env variable
+                            'timeZone': 'America/Phoenix'
                         },
                         'end': {
                             'dateTime': end_dt.isoformat(),
