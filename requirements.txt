@@ -1,5 +1,5 @@
 discord.py
 pytesseract
 Pillow
-google-auth-oauthlib
+google-auth
 google-api-python-client
