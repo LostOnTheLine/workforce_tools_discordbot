@@ -43,9 +43,13 @@ if not os.path.exists(OCR_DIR):
 def save_ocr_result(text):
     """Save the OCR result to a file and rotate the last 3 results."""
     try:
-        # Shift existing files: 2 -> 3, 1 -> 2
+        # Delete the oldest file (ocr_result_3.txt) if it exists
+        if os.path.exists(os.path.join(OCR_DIR, 'ocr_result_3.txt')):
+            os.remove(os.path.join(OCR_DIR, 'ocr_result_3.txt'))
+        # Move ocr_result_2.txt to ocr_result_3.txt
         if os.path.exists(os.path.join(OCR_DIR, 'ocr_result_2.txt')):
             shutil.move(os.path.join(OCR_DIR, 'ocr_result_2.txt'), os.path.join(OCR_DIR, 'ocr_result_3.txt'))
+        # Move ocr_result_1.txt to ocr_result_2.txt
         if os.path.exists(os.path.join(OCR_DIR, 'ocr_result_1.txt')):
             shutil.move(os.path.join(OCR_DIR, 'ocr_result_1.txt'), os.path.join(OCR_DIR, 'ocr_result_2.txt'))
         # Save the new result as ocr_result_1.txt
@@ -146,14 +150,15 @@ async def on_message(message):
                             continue
                         
                         # Parse the day of the week and shift time from the first line
-                        # Allow for additional characters (e.g., A>?, A >) before the '>'
-                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*(?:[A-Z?.!]\s*)?>$', line)
+                        # Allow for any characters before the '>' (e.g., A>?, A >)
+                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\](?:.*)?>$', line)
                         if not day_shift_match:
                             logger.warning(f"Line does not match expected day shift format: {line}")
                             i += 1
                             continue
                         
                         day_of_week, start_time, end_time = day_shift_match.groups()
+                        logger.info(f"Matched day shift: {day_of_week}, {start_time} - {end_time}")
                         
                         # Get the date number and event title from the next line
                         i += 1
@@ -168,6 +173,7 @@ async def on_message(message):
                         
                         day_num, event_title = date_title_match.groups()
                         day_num = int(day_num)
+                        logger.info(f"Parsed date number and title: {day_num}, {event_title}")
                         
                         # Find the correct month and year for this date
                         event_date = None
