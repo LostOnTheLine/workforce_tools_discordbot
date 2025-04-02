@@ -8,7 +8,12 @@ from google.oauth2 import service_account
 import re
 from datetime import datetime, timedelta
 import os
+import logging
 import traceback
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
 
 # Bot setup
 intents = discord.Intents.default()
@@ -22,7 +27,7 @@ CALENDAR_ID = os.getenv('CALENDAR_ID', 'primary')  # Default to 'primary' if not
 # Google Calendar setup with Service Account
 creds_path = '/creds/service-account-key.json'
 if not os.path.exists(creds_path):
-    print("Service account key file not found! Please mount /creds with service-account-key.json")
+    logger.error("Service account key file not found! Please mount /creds with service-account-key.json")
     exit(1)
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -31,7 +36,7 @@ service = build('calendar', 'v3', credentials=creds)
 
 @bot.event
 async def on_ready():
-    print(f'Bot is ready as {bot.user}')
+    logger.info(f'Bot is ready as {bot.user}')
     # Send a startup message to the #work-calendar channel
     for guild in bot.guilds:
         channel = discord.utils.get(guild.text_channels, name='work-calendar')
@@ -39,39 +44,39 @@ async def on_ready():
             await channel.send("Bot is now active and ready to process screenshots!")
             break
     else:
-        print("Could not find #work-calendar channel to send startup message.")
+        logger.warning("Could not find #work-calendar channel to send startup message.")
 
 @bot.event
 async def on_message(message):
-    print(f"Received message from {message.author} in channel {message.channel.name}")
+    logger.info(f"Received message from {message.author} in channel {message.channel.name}")
     if message.author == bot.user:
-        print("Message is from the bot itself, ignoring.")
+        logger.info("Message is from the bot itself, ignoring.")
         return
     if not message.attachments:
-        print("Message has no attachments, ignoring.")
+        logger.info("Message has no attachments, ignoring.")
         return
     if message.channel.name != 'work-calendar':
-        print(f"Message is not in #work-calendar (channel: {message.channel.name}), ignoring.")
+        logger.info(f"Message is not in #work-calendar (channel: {message.channel.name}), ignoring.")
         return
 
-    print(f"Processing message with {len(message.attachments)} attachments")
+    logger.info(f"Processing message with {len(message.attachments)} attachments")
     for attachment in message.attachments:
         if attachment.filename.endswith(('.png', '.jpg', '.jpeg')):
-            print(f"Found image attachment: {attachment.filename}")
+            logger.info(f"Found image attachment: {attachment.filename}")
             try:
                 # Download image
                 image_data = await attachment.read()
                 image = Image.open(io.BytesIO(image_data))
                 
                 # OCR
-                print("Performing OCR on image")
+                logger.info("Performing OCR on image")
                 try:
                     text = pytesseract.image_to_string(image)
                 except Exception as e:
-                    print(f"OCR error: {str(e)}")
+                    logger.error(f"OCR error: {str(e)}")
                     await message.channel.send("Error: Failed to perform OCR on the image. Please try a different image or ensure the text is clear.")
                     return
-                print(f"OCR result: {text}")
+                logger.info(f"OCR result:\n{text}")
                 
                 # Current date for reference
                 current_date = datetime.now()
@@ -81,12 +86,11 @@ async def on_message(message):
                 events = []
                 lines = text.split('\n')
                 current_day = None
-                current_date = datetime.now()  # Initialize with current date instead of None
-                # Removed current_month since it's not used correctly
+                current_date = None  # We'll set this when we parse a date
 
-                for line in lines:
+                for i, line in enumerate(lines):
                     line = line.strip()
-                    # Match day and date (e.g., "Mon 14")
+                    # Match day and date (e.g., "Mon 31" or "Wed 2")
                     day_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})$', line)
                     if day_match:
                         current_day, day_num = day_match.groups()
@@ -94,32 +98,43 @@ async def on_message(message):
                         
                         # Find the correct month and year for this date
                         for month_offset in range(0, 3):  # Check current month and next two months
-                            test_date = current_date.replace(day=1, month=current_date.month + month_offset)
+                            test_date = datetime.now().replace(day=1, month=datetime.now().month + month_offset)
                             if test_date.month > 12:
                                 test_date = test_date.replace(year=test_date.year + 1, month=1)
                             try:
                                 test_date = test_date.replace(day=day_num)
                                 # Check if the day of the week matches
-                                if test_date.strftime('%a')[:3] == current_day and current_date <= test_date <= two_months_later:
+                                if test_date.strftime('%a')[:3] == current_day and datetime.now() <= test_date <= two_months_later:
                                     current_date = test_date
+                                    logger.info(f"Parsed date: {current_date.strftime('%Y-%m-%d')} ({current_day})")
                                     break
                             except ValueError:
                                 continue
                         continue
                     
-                    # Match shift time and event (e.g., "10:00 AM - 7:00 PM [8:00]")
+                    # Match shift time (e.g., "10:30 AM - 7:30 PM [8:00]")
                     shift_match = re.match(r'(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]', line)
                     if shift_match and current_date:
                         start_time, end_time = shift_match.groups()
                         
-                        # Get the event title (next line after the shift time)
-                        event_title = lines[lines.index(line) + 1].strip()
-                        if not event_title or 'Associate' not in event_title:
-                            event_title = lines[lines.index(line) + 2].strip()
+                        # Get the event title (next 1-2 lines after the shift time)
+                        event_title = None
+                        for j in range(1, 3):
+                            if i + j < len(lines):
+                                next_line = lines[i + j].strip()
+                                if 'Associate' in next_line:
+                                    continue
+                                if next_line and 'Store' in next_line:
+                                    event_title = next_line
+                                    break
+                        if not event_title:
+                            logger.warning(f"No event title found for shift on {current_date.strftime('%Y-%m-%d')}")
+                            continue
                         
                         # Parse start and end times
                         start_dt = datetime.strptime(f"{current_date.strftime('%Y-%m-%d')} {start_time}", '%Y-%m-%d %I:%M %p')
                         end_dt = datetime.strptime(f"{current_date.strftime('%Y-%m-%d')} {end_time}", '%Y-%m-%d %I:%M %p')
+                        logger.info(f"Parsed shift: {start_dt} to {end_dt}, Title: {event_title}")
                         
                         # Check for existing events on this day
                         day_start = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -132,7 +147,7 @@ async def on_message(message):
                                 singleEvents=True
                             ).execute().get('items', [])
                         except Exception as e:
-                            print(f"Google Calendar API error (list events): {str(e)}")
+                            logger.error(f"Google Calendar API error (list events): {str(e)}")
                             await message.channel.send("Error: Failed to access Google Calendar (list events). Please check the Service Account permissions.")
                             return
                         
@@ -140,9 +155,9 @@ async def on_message(message):
                         for event in existing_events:
                             try:
                                 service.events().delete(calendarId=CALENDAR_ID, eventId=event['id']).execute()
-                                print(f"Deleted existing event on {day_start.strftime('%Y-%m-%d')}: {event['summary']}")
+                                logger.info(f"Deleted existing event on {day_start.strftime('%Y-%m-%d')}: {event['summary']}")
                             except Exception as e:
-                                print(f"Google Calendar API error (delete event): {str(e)}")
+                                logger.error(f"Google Calendar API error (delete event): {str(e)}")
                                 await message.channel.send("Error: Failed to delete existing events in Google Calendar. Please check the Service Account permissions.")
                                 return
                         
@@ -164,16 +179,22 @@ async def on_message(message):
                 for event in events:
                     try:
                         service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+                        logger.info(f"Added event: {event['summary']} on {event['start']['dateTime']}")
                     except Exception as e:
-                        print(f"Google Calendar API error (insert event): {str(e)}")
+                        logger.error(f"Google Calendar API error (insert event): {str(e)}")
                         await message.channel.send("Error: Failed to add events to Google Calendar. Please check the Service Account permissions.")
                         return
                 
                 await message.channel.send(f'Added {len(events)} events to your Google Calendar!')
+                logger.info(f"Successfully added {len(events)} events to Google Calendar")
             except Exception as e:
-                print(f"Unexpected error: {traceback.format_exc()}")
+                logger.error(f"Unexpected error: {traceback.format_exc()}")
                 await message.channel.send(f"Unexpected error occurred: {str(e)}. Please try again or contact the bot owner.")
 
     await bot.process_commands(message)
+
+if not DISCORD_BOT_TOKEN:
+    logger.error("DISCORD_BOT_TOKEN environment variable not set!")
+    exit(1)
 
 bot.run(DISCORD_BOT_TOKEN)
