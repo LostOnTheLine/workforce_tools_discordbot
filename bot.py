@@ -134,9 +134,20 @@ async def on_message(message):
                     
                     # Check if this line starts a new day block (ends with '>')
                     if line.endswith('>'):
+                        # Check if this is a day without a shift (e.g., "Fri >")
+                        no_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*>$', line)
+                        if no_shift_match:
+                            day_of_week = no_shift_match.group(1)
+                            logger.info(f"Found day without shift: {day_of_week}")
+                            i += 1
+                            # Skip the next line (should be the date number)
+                            if i < len(lines) and re.match(r'^\d{1,2}$', lines[i].strip()):
+                                i += 1
+                            continue
+                        
                         # Parse the day of the week and shift time from the first line
-                        # Ignore any symbol (like 'A') before the '>'
-                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*(?:[A-Z]\s*)?>$', line)
+                        # Allow for additional characters (e.g., A>?, A >) before the '>'
+                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*(?:[A-Z?.!]\s*)?>$', line)
                         if not day_shift_match:
                             logger.warning(f"Line does not match expected day shift format: {line}")
                             i += 1
