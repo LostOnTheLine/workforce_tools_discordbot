@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageEnhance
 import io
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -55,6 +55,17 @@ def save_ocr_result(text):
     except Exception as e:
         logger.error(f"Failed to save OCR result: {str(e)}")
 
+def preprocess_image(image):
+    """Preprocess the image to improve OCR accuracy."""
+    # Convert to grayscale
+    image = image.convert('L')
+    # Enhance contrast
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(2.0)  # Increase contrast (adjust as needed)
+    # Apply binary threshold (optional, can be tuned)
+    # image = image.point(lambda x: 0 if x < 128 else 255, '1')
+    return image
+
 @bot.event
 async def on_ready():
     logger.info(f'Bot is ready as {bot.user}')
@@ -89,6 +100,9 @@ async def on_message(message):
                 image_data = await attachment.read()
                 image = Image.open(io.BytesIO(image_data))
                 
+                # Preprocess the image for better OCR
+                image = preprocess_image(image)
+                
                 # OCR
                 logger.info("Performing OCR on image")
                 try:
@@ -121,7 +135,8 @@ async def on_message(message):
                     # Check if this line starts a new day block (ends with '>')
                     if line.endswith('>'):
                         # Parse the day of the week and shift time from the first line
-                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*[A-Z]\s*>$', line)
+                        # Ignore any symbol (like 'A') before the '>'
+                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*(?:[A-Z]\s*)?>$', line)
                         if not day_shift_match:
                             logger.warning(f"Line does not match expected day shift format: {line}")
                             i += 1
@@ -164,7 +179,7 @@ async def on_message(message):
                             i += 1
                             continue
                         
-                        # Create the first event for this day
+                        # Create the event for this day
                         start_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {start_time}", '%Y-%m-%d %I:%M %p')
                         end_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {end_time}", '%Y-%m-%d %I:%M %p')
                         logger.info(f"Parsed shift: {start_dt} to {end_dt}, Title: {event_title}")
@@ -208,46 +223,8 @@ async def on_message(message):
                         }
                         events.append(event)
                         
-                        # Check for an additional shift time in the next few lines
+                        # Move to the next line and continue looking for the next day block
                         i += 1
-                        while i < len(lines):
-                            next_line = lines[i].strip()
-                            if not next_line or 'Associate' in next_line:
-                                i += 1
-                                continue
-                            # Check if the next line is a new day block
-                            if next_line.endswith('>'):
-                                break
-                            # Check if the next line is a shift time
-                            shift_match = re.match(r'(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]', next_line)
-                            if shift_match:
-                                start_time, end_time = shift_match.groups()
-                                # Get the event title from the next line
-                                i += 1
-                                if i >= len(lines):
-                                    break
-                                next_line = lines[i].strip()
-                                if 'Associate' in next_line or not next_line:
-                                    i += 1
-                                    continue
-                                event_title = next_line
-                                # Create the additional event for the same day
-                                start_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {start_time}", '%Y-%m-%d %I:%M %p')
-                                end_dt = datetime.strptime(f"{event_date.strftime('%Y-%m-%d')} {end_time}", '%Y-%m-%d %I:%M %p')
-                                logger.info(f"Parsed additional shift: {start_dt} to {end_dt}, Title: {event_title}")
-                                event = {
-                                    'summary': event_title,
-                                    'start': {
-                                        'dateTime': start_dt.isoformat(),
-                                        'timeZone': 'America/Phoenix'
-                                    },
-                                    'end': {
-                                        'dateTime': end_dt.isoformat(),
-                                        'timeZone': 'America/Phoenix'
-                                    }
-                                }
-                                events.append(event)
-                            i += 1
                         continue
                     
                     i += 1
