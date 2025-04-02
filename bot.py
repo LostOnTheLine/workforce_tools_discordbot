@@ -4,7 +4,7 @@ import pytesseract
 from PIL import Image
 import io
 from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2 import service_account
 import re
 from datetime import datetime, timedelta
 import os
@@ -18,22 +18,14 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 CALENDAR_ID = os.getenv('CALENDAR_ID', 'primary')  # Default to 'primary' if not set
 
-# Google Calendar setup
-creds_path = '/creds/credentials.json'
-token_path = '/data/token.json'  # Persistent storage for token
-creds = None
-if os.path.exists(creds_path):
-    flow = InstalledAppFlow.from_client_secrets_file(creds_path, ['https://www.googleapis.com/auth/calendar'])
-    if os.path.exists(token_path):
-        creds = flow.run_local_server(port=0, token_path=token_path)
-    else:
-        creds = flow.run_local_server(port=0)
-        with open(token_path, 'w') as token_file:
-            token_file.write(creds.to_json())
-else:
-    print("Credentials file not found! Please mount /creds with credentials.json")
+# Google Calendar setup with Service Account
+creds_path = '/creds/service-account-key.json'
+if not os.path.exists(creds_path):
+    print("Service account key file not found! Please mount /creds with service-account-key.json")
     exit(1)
 
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+creds = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
 service = build('calendar', 'v3', credentials=creds)
 
 @bot.event
