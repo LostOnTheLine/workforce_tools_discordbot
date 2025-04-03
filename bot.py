@@ -120,12 +120,12 @@ async def on_message(message):
                 
                 # Current date for reference, normalized to midnight
                 current_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                two_months_later = current_date + timedelta(days=60)
-                # Allow dates from the start of the current week
-                start_of_week = current_date - timedelta(days=current_date.weekday())
+                date_range_start = current_date - timedelta(days=7)  # 7 days in the past
+                date_range_end = current_date + timedelta(days=40)   # 40 days in the future
                 
                 # Parse events
                 events = []
+                event_details = []  # To store details for the confirmation message
                 lines = text.split('\n')
                 i = 0
                 while i < len(lines):
@@ -188,8 +188,8 @@ async def on_message(message):
                                 test_date = test_date.replace(year=test_date.year + 1, month=1)
                             try:
                                 test_date = test_date.replace(day=day_num)
-                                # Check if the day of the week matches
-                                if test_date.strftime('%a')[:3] == day_of_week and start_of_week <= test_date <= two_months_later:
+                                # Check if the day of the week matches and the date is within the allowed range
+                                if test_date.strftime('%a')[:3] == day_of_week and date_range_start <= test_date <= date_range_end:
                                     event_date = test_date
                                     logger.info(f"Parsed date: {event_date.strftime('%Y-%m-%d')} ({day_of_week})")
                                     break
@@ -243,7 +243,7 @@ async def on_message(message):
                                 'timeZone': 'America/Phoenix'
                             }
                         }
-                        events.append(event)
+                        events.append((event, start_dt, end_dt))  # Store event with start and end times for the confirmation message
                         
                         # Move to the next line and continue looking for the next day block
                         i += 1
@@ -251,17 +251,26 @@ async def on_message(message):
                     
                     i += 1
                 
-                # Add events to Google Calendar
-                for event in events:
+                # Add events to Google Calendar and collect details for the confirmation message
+                for event, start_dt, end_dt in events:
                     try:
                         service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
                         logger.info(f"Added event: {event['summary']} on {event['start']['dateTime']}")
+                        # Format the event details for the confirmation message
+                        event_date_str = start_dt.strftime('%Y/%m/%d')
+                        start_time_str = start_dt.strftime('%I:%M%p').lstrip('0')
+                        end_time_str = end_dt.strftime('%I:%M%p').lstrip('0')
+                        event_details.append(f"{event_date_str}: {start_time_str} - {end_time_str}")
                     except Exception as e:
                         logger.error(f"Google Calendar API error (insert event): {str(e)}")
                         await message.channel.send("Error: Failed to add events to Google Calendar. Please check the Service Account permissions.")
                         return
                 
-                await message.channel.send(f'Added {len(events)} events to your Google Calendar!')
+                # Send the confirmation message with event details
+                confirmation_message = f"Added {len(events)} events to your Google Calendar!"
+                if event_details:
+                    confirmation_message += "\n" + "\n".join(event_details)
+                await message.channel.send(confirmation_message)
                 logger.info(f"Successfully added {len(events)} events to Google Calendar")
             except Exception as e:
                 logger.error(f"Unexpected error: {traceback.format_exc()}")
