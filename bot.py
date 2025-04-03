@@ -66,8 +66,6 @@ def preprocess_image(image):
     # Enhance contrast
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(2.0)  # Increase contrast (adjust as needed)
-    # Apply binary threshold (optional, can be tuned)
-    # image = image.point(lambda x: 0 if x < 128 else 255, '1')
     return image
 
 @bot.event
@@ -120,9 +118,11 @@ async def on_message(message):
                 # Save OCR result to file
                 save_ocr_result(text)
                 
-                # Current date for reference
-                current_date = datetime.now()
+                # Current date for reference, normalized to midnight
+                current_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 two_months_later = current_date + timedelta(days=60)
+                # Allow dates from the start of the current week
+                start_of_week = current_date - timedelta(days=current_date.weekday())
                 
                 # Parse events
                 events = []
@@ -150,8 +150,7 @@ async def on_message(message):
                             continue
                         
                         # Parse the day of the week and shift time from the first line
-                        # Allow for any characters before the '>' (e.g., A>?, A >)
-                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*.*>$', line)
+                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*.*\>$', line)
                         if not day_shift_match:
                             logger.warning(f"Line does not match expected day shift format: {line}")
                             i += 1
@@ -184,13 +183,13 @@ async def on_message(message):
                         # Find the correct month and year for this date
                         event_date = None
                         for month_offset in range(0, 3):  # Check current month and next two months
-                            test_date = datetime.now().replace(day=1, month=datetime.now().month + month_offset)
+                            test_date = datetime.now().replace(day=1, month=datetime.now().month + month_offset, hour=0, minute=0, second=0, microsecond=0)
                             if test_date.month > 12:
                                 test_date = test_date.replace(year=test_date.year + 1, month=1)
                             try:
                                 test_date = test_date.replace(day=day_num)
                                 # Check if the day of the week matches
-                                if test_date.strftime('%a')[:3] == day_of_week and datetime.now() <= test_date <= two_months_later:
+                                if test_date.strftime('%a')[:3] == day_of_week and start_of_week <= test_date <= two_months_later:
                                     event_date = test_date
                                     logger.info(f"Parsed date: {event_date.strftime('%Y-%m-%d')} ({day_of_week})")
                                     break
