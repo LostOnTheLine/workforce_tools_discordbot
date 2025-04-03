@@ -151,7 +151,7 @@ async def on_message(message):
                         
                         # Parse the day of the week and shift time from the first line
                         # Allow for any characters before the '>' (e.g., A>?, A >)
-                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\](?:.*)?>$', line)
+                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*.*>$', line)
                         if not day_shift_match:
                             logger.warning(f"Line does not match expected day shift format: {line}")
                             i += 1
@@ -160,16 +160,22 @@ async def on_message(message):
                         day_of_week, start_time, end_time = day_shift_match.groups()
                         logger.info(f"Matched day shift: {day_of_week}, {start_time} - {end_time}")
                         
-                        # Get the date number and event title from the next line
+                        # Get the date number and event title from the next non-empty line
                         i += 1
-                        if i >= len(lines):
+                        while i < len(lines):
+                            next_line = lines[i].strip()
+                            if not next_line or 'Associate' in next_line:
+                                i += 1
+                                continue
+                            date_title_match = re.match(r'^(\d{1,2})\s+(.+)$', next_line)
+                            if not date_title_match:
+                                logger.warning(f"Line does not match expected date/title format: {next_line}")
+                                i += 1
+                                continue
                             break
-                        next_line = lines[i].strip()
-                        date_title_match = re.match(r'^(\d{1,2})\s+(.+)$', next_line)
-                        if not date_title_match:
-                            logger.warning(f"Line does not match expected date/title format: {next_line}")
-                            i += 1
-                            continue
+                        else:
+                            logger.warning("Reached end of lines while looking for date/title")
+                            break
                         
                         day_num, event_title = date_title_match.groups()
                         day_num = int(day_num)
