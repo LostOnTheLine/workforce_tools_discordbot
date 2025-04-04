@@ -137,7 +137,7 @@ async def on_message(message):
                         continue
                     
                     # Check if this line starts a new day block (ends with '>')
-                    if line.endswith('>'):
+                    if line.endswith('>') or line.endswith('>?'):
                         # Check if this is a day without a shift (e.g., "Fri >")
                         no_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*>$', line)
                         if no_shift_match:
@@ -150,7 +150,7 @@ async def on_message(message):
                             continue
                         
                         # Parse the day of the week and shift time from the first line
-                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*.*\>$', line)
+                        day_shift_match = re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2}:\d{2}\s+[AP]M)\s*-\s*(\d{1,2}:\d{2}\s+[AP]M)\s*\[\d{1,2}:\d{2}\]\s*.*>[?]?$', line)
                         if not day_shift_match:
                             logger.warning(f"Line does not match expected day shift format: {line}")
                             i += 1
